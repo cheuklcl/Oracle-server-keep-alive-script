@@ -17,16 +17,17 @@ LOW_WATERMARK=19
 HIGH_WATERMARK=21
 THROTTLE_HIGH=30
 THROTTLE_RESUME=21
-THROTTLE_STOP=35
-CHECK_INTERVAL=2
+CHECK_INTERVAL=1
 MAX_WORKERS=1
 CPU_CORES=1
 NORMAL_LIMIT_PER_WORKER=6
 LOW_LIMIT_PER_WORKER=1
+STARTUP_LOW_CYCLES=6
 workers=()
 limiter_pids=()
 current_mode="normal"
 current_limit=0
+workers_paused=0
 
 decide_action() {
   local usage="$1"
@@ -120,6 +121,22 @@ apply_limiters() {
   done
 }
 
+pause_workers() {
+  local pid
+  for pid in "${workers[@]}"; do
+    kill -STOP "$pid" >/dev/null 2>&1 || true
+  done
+  workers_paused=1
+}
+
+resume_workers() {
+  local pid
+  for pid in "${workers[@]}"; do
+    kill -CONT "$pid" >/dev/null 2>&1 || true
+  done
+  workers_paused=0
+}
+
 ensure_worker_count() {
   local target="$1"
   local count
@@ -186,11 +203,7 @@ decide_throttle_state() {
 decide_protection_level() {
   local usage="$1"
   local protect_low="$2"
-  local protect_stop="$3"
-
-  if [ "$usage" -gt "$protect_stop" ]; then
-    echo "stop"
-  elif [ "$usage" -gt "$protect_low" ]; then
+  if [ "$usage" -gt "$protect_low" ]; then
     echo "low"
   else
     echo "normal"
@@ -203,6 +216,25 @@ resolve_max_workers() {
     echo 4
   else
     echo "$cores"
+  fi
+}
+
+has_cpulimit() {
+  if command -v cpulimit >/dev/null 2>&1; then
+    echo "yes"
+  else
+    echo "no"
+  fi
+}
+
+resolve_safe_worker_target() {
+  local target="$1"
+  local limiter_available="$2"
+
+  if [ "$target" -eq 4 ] && [ "$limiter_available" = "no" ]; then
+    echo 1
+  else
+    echo "$target"
   fi
 }
 
@@ -237,6 +269,7 @@ run_controller() {
   trap cleanup INT TERM EXIT
 
   local protection_mode="normal"
+  local startup_left="$STARTUP_LOW_CYCLES"
 
   while true; do
     prune_workers
@@ -251,36 +284,55 @@ run_controller() {
     local action="hold"
 
     if [ "$CPU_CORES" -eq 4 ]; then
-      local level
-      level="$(decide_protection_level "$cpu_usage" "$THROTTLE_HIGH" "$THROTTLE_STOP")"
+      local limiter_available
+      limiter_available="$(has_cpulimit)"
 
-      if [ "$protection_mode" != "normal" ] && [ "$cpu_usage" -lt "$THROTTLE_RESUME" ]; then
+      local level
+      level="$(decide_protection_level "$cpu_usage" "$THROTTLE_HIGH")"
+
+      if [ "$startup_left" -gt 0 ]; then
+        protection_mode="low"
+        startup_left=$((startup_left - 1))
+      elif [ "$protection_mode" != "normal" ] && [ "$cpu_usage" -lt "$THROTTLE_RESUME" ]; then
         protection_mode="normal"
-      elif [ "$level" = "stop" ]; then
-        protection_mode="stop"
-      elif [ "$level" = "low" ] && [ "$protection_mode" != "stop" ]; then
+      elif [ "$level" = "low" ]; then
         protection_mode="low"
       fi
 
       case "$protection_mode" in
         normal)
           current_mode="normal"
-          ensure_worker_count "$MAX_WORKERS"
-          apply_limiters "$NORMAL_LIMIT_PER_WORKER"
-          action="normal_cap"
+          if [ "$workers_paused" -eq 1 ]; then
+            resume_workers
+          fi
+          local safe_target
+          safe_target="$(resolve_safe_worker_target "$MAX_WORKERS" "$limiter_available")"
+          ensure_worker_count "$safe_target"
+          if [ "$limiter_available" = "yes" ]; then
+            apply_limiters "$NORMAL_LIMIT_PER_WORKER"
+            action="normal_cap"
+          else
+            kill_all_limiters
+            current_limit=0
+            action="normal_nolimiter"
+          fi
           ;;
         low)
           current_mode="protect_low"
-          ensure_worker_count 1
-          apply_limiters "$LOW_LIMIT_PER_WORKER"
-          action="protect_low"
-          ;;
-        stop)
-          current_mode="protect_stop"
-          kill_all_workers
-          kill_all_limiters
-          current_limit=0
-          action="protect_stop"
+          if [ "$limiter_available" = "yes" ]; then
+            ensure_worker_count "$MAX_WORKERS"
+            apply_limiters "$LOW_LIMIT_PER_WORKER"
+            if [ "$workers_paused" -eq 0 ]; then
+              pause_workers
+            fi
+            action="protect_low"
+          else
+            if [ "$workers_paused" -eq 0 ]; then
+              pause_workers
+            fi
+            current_limit=0
+            action="protect_low_nolimiter"
+          fi
           ;;
       esac
     else

@@ -25,13 +25,20 @@ test_throttle_state() {
 }
 
 test_protection_level() {
-  [ "$(decide_protection_level 36 30 35)" = "stop" ]
-  [ "$(decide_protection_level 32 30 35)" = "low" ]
-  [ "$(decide_protection_level 29 30 35)" = "normal" ]
+  [ "$(decide_protection_level 36 30)" = "low" ]
+  [ "$(decide_protection_level 32 30)" = "low" ]
+  [ "$(decide_protection_level 29 30)" = "normal" ]
+}
+
+test_safe_worker_target() {
+  [ "$(resolve_safe_worker_target 4 yes)" = "4" ]
+  [ "$(resolve_safe_worker_target 4 no)" = "1" ]
+  [ "$(resolve_safe_worker_target 2 no)" = "2" ]
 }
 
 test_decide_action
 test_prune_pid_list
 test_throttle_state
 test_protection_level
+test_safe_worker_target
 echo "PASS"
