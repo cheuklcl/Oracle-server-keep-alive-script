@@ -281,25 +281,37 @@ bandwidth_speedtest_go() {
 }
 
 uninstall() {
+  _yellow "开始卸载保活服务..."
   if command -v docker >/dev/null 2>&1; then
     docker stop boinc &>/dev/null || true
     docker rm boinc &>/dev/null || true
     docker rmi boinc &>/dev/null || true
   fi
-  systemctl disable --now cpu-limit.service memory-limit.service bandwidth_occupier.service bandwidth_occupier.timer 2>/dev/null || true
+  timeout 8s systemctl stop --job-mode=replace-irreversibly cpu-limit.service memory-limit.service bandwidth_occupier.service bandwidth_occupier.timer 2>/dev/null || true
+  timeout 8s systemctl disable --now cpu-limit.service memory-limit.service bandwidth_occupier.service bandwidth_occupier.timer 2>/dev/null || true
   systemctl kill cpu-limit.service --kill-who=all 2>/dev/null || true
   systemctl kill memory-limit.service --kill-who=all 2>/dev/null || true
   systemctl kill bandwidth_occupier.service --kill-who=all 2>/dev/null || true
+  systemctl kill bandwidth_occupier.timer --kill-who=all 2>/dev/null || true
   systemctl reset-failed cpu-limit.service memory-limit.service bandwidth_occupier.service bandwidth_occupier.timer 2>/dev/null || true
+  _yellow "停止服务完成，开始清理进程..."
   pkill -f "/usr/local/bin/cpu-limit.sh" &>/dev/null || true
   pkill -f "/usr/local/bin/memory-limit.sh" &>/dev/null || true
   pkill -f "/usr/local/bin/bandwidth_occupier.sh" &>/dev/null || true
-  pkill -x dd &>/dev/null || true
+  pkill -f '^dd if=/dev/zero of=/dev/null$' &>/dev/null || true
   pkill -x cpulimit &>/dev/null || true
+  _yellow "清理进程完成，开始删除文件..."
   rm -f /etc/systemd/system/cpu-limit.service
   rm -f /etc/systemd/system/memory-limit.service
   rm -f /etc/systemd/system/bandwidth_occupier.service
   rm -f /etc/systemd/system/bandwidth_occupier.timer
+  rm -f /lib/systemd/system/cpu-limit.service
+  rm -f /lib/systemd/system/memory-limit.service
+  rm -f /lib/systemd/system/bandwidth_occupier.service
+  rm -f /lib/systemd/system/bandwidth_occupier.timer
+  rm -f /etc/systemd/system/multi-user.target.wants/cpu-limit.service
+  rm -f /etc/systemd/system/multi-user.target.wants/memory-limit.service
+  rm -f /etc/systemd/system/timers.target.wants/bandwidth_occupier.timer
   rm -f /usr/local/bin/cpu-limit.sh /usr/local/bin/memory-limit.sh /usr/local/bin/bandwidth_occupier.sh
   rm -rf /usr/local/bin/cpu-limit.sh* /usr/local/bin/memory-limit.sh* /usr/local/bin/bandwidth_occupier.sh*
   rm -f /tmp/cpu-limit.pid /tmp/memory-limit.pid /tmp/bandwidth_occupier.pid
@@ -308,6 +320,7 @@ uninstall() {
   _yellow "已卸载CPU占用 - The cpu limit script has been uninstalled successfully."
   _yellow "已卸载内存占用 - The memory limit script has been uninstalled successfully."
   _yellow "已卸载带宽占用 - The bandwidth occupier and timer script has been uninstalled successfully."
+  _yellow "卸载结束"
   systemctl daemon-reload
 }
 

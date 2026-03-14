@@ -29,6 +29,16 @@ if ! grep -q 'systemctl kill cpu-limit.service --kill-who=all' "$OALIVE"; then
   exit 1
 fi
 
+if ! grep -q 'systemctl stop --job-mode=replace-irreversibly cpu-limit.service memory-limit.service bandwidth_occupier.service bandwidth_occupier.timer' "$OALIVE"; then
+  echo "FAIL: hard stop command missing"
+  exit 1
+fi
+
+if ! grep -q 'timeout 8s' "$OALIVE"; then
+  echo "FAIL: uninstall timeout guard missing"
+  exit 1
+fi
+
 if ! grep -q 'if command -v docker >/dev/null 2>&1; then' "$OALIVE"; then
   echo "FAIL: docker guard missing in uninstall"
   exit 1

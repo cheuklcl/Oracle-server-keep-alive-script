@@ -22,12 +22,10 @@ MAX_WORKERS=1
 CPU_CORES=1
 NORMAL_LIMIT_PER_WORKER=24
 LOW_LIMIT_PER_WORKER=1
-STARTUP_LOW_CYCLES=6
 workers=()
 limiter_pids=()
 current_mode="normal"
 current_limit=0
-workers_paused=0
 
 decide_action() {
   local usage="$1"
@@ -119,22 +117,6 @@ apply_limiters() {
       start_limiter "$pid" "$limit"
     fi
   done
-}
-
-pause_workers() {
-  local pid
-  for pid in "${workers[@]}"; do
-    kill -STOP "$pid" >/dev/null 2>&1 || true
-  done
-  workers_paused=1
-}
-
-resume_workers() {
-  local pid
-  for pid in "${workers[@]}"; do
-    kill -CONT "$pid" >/dev/null 2>&1 || true
-  done
-  workers_paused=0
 }
 
 ensure_worker_count() {
@@ -269,7 +251,6 @@ run_controller() {
   trap cleanup INT TERM EXIT
 
   local protection_mode="normal"
-  local startup_left="$STARTUP_LOW_CYCLES"
 
   while true; do
     prune_workers
@@ -290,21 +271,17 @@ run_controller() {
       local level
       level="$(decide_protection_level "$cpu_usage" "$THROTTLE_HIGH")"
 
-      if [ "$startup_left" -gt 0 ]; then
-        protection_mode="low"
-        startup_left=$((startup_left - 1))
-      elif [ "$protection_mode" != "normal" ] && [ "$cpu_usage" -lt "$THROTTLE_RESUME" ]; then
+      if [ "$protection_mode" != "normal" ] && [ "$cpu_usage" -lt "$THROTTLE_RESUME" ]; then
         protection_mode="normal"
       elif [ "$level" = "low" ]; then
         protection_mode="low"
+      else
+        protection_mode="normal"
       fi
 
       case "$protection_mode" in
         normal)
           current_mode="normal"
-          if [ "$workers_paused" -eq 1 ]; then
-            resume_workers
-          fi
           local safe_target
           safe_target="$(resolve_safe_worker_target "$MAX_WORKERS" "$limiter_available")"
           ensure_worker_count "$safe_target"
@@ -322,14 +299,10 @@ run_controller() {
           if [ "$limiter_available" = "yes" ]; then
             ensure_worker_count "$MAX_WORKERS"
             apply_limiters "$LOW_LIMIT_PER_WORKER"
-            if [ "$workers_paused" -eq 0 ]; then
-              pause_workers
-            fi
             action="protect_low"
           else
-            if [ "$workers_paused" -eq 0 ]; then
-              pause_workers
-            fi
+            ensure_worker_count 1
+            kill_all_limiters
             current_limit=0
             action="protect_low_nolimiter"
           fi
