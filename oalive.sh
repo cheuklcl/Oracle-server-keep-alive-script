@@ -39,7 +39,7 @@ fi
 
 checkver() {
   running_version=$(grep "ver=\"[0-9]\{4\}\.[0-9]\{2\}\.[0-9]\{2\}\.[0-9]\{2\}\.[0-9]\{2\}" "$0" | awk -F '"' '{print $2}')
-  curl -L https://gitlab.com/spiritysdx/Oracle-server-keep-alive-script/-/raw/main/oalive.sh -o oalive1.sh && chmod +x oalive1.sh
+  curl -L https://raw.githubusercontent.com/cheuklcl/Oracle-server-keep-alive-script/main/oalive.sh -o oalive1.sh && chmod +x oalive1.sh
   downloaded_version=$(grep "ver=\"[0-9]\{4\}\.[0-9]\{2\}\.[0-9]\{2\}\.[0-9]\{2\}\.[0-9]\{2\}" oalive1.sh | awk -F '"' '{print $2}')
   if [ "$running_version" != "$downloaded_version" ]; then
     _yellow "更新脚本从 $ver 到 $downloaded_version"
@@ -86,24 +86,11 @@ boinc() {
 }
 
 calculate() {
-  curl -L https://gitlab.com/spiritysdx/Oracle-server-keep-alive-script/-/raw/main/cpu-limit.sh -o cpu-limit.sh && chmod +x cpu-limit.sh
+  curl -L https://raw.githubusercontent.com/cheuklcl/Oracle-server-keep-alive-script/main/cpu-limit.sh -o cpu-limit.sh && chmod +x cpu-limit.sh
   mv cpu-limit.sh /usr/local/bin/cpu-limit.sh
   chmod +x /usr/local/bin/cpu-limit.sh
-  curl -L https://gitlab.com/spiritysdx/Oracle-server-keep-alive-script/-/raw/main/cpu-limit.service -o cpu-limit.service && chmod +x cpu-limit.service
+  curl -L https://raw.githubusercontent.com/cheuklcl/Oracle-server-keep-alive-script/main/cpu-limit.service -o cpu-limit.service && chmod +x cpu-limit.service
   mv cpu-limit.service /etc/systemd/system/cpu-limit.service
-  line_number=7
-  total_cores=0
-  if [ -f "/proc/cpuinfo" ]; then
-    total_cores=$(grep -c ^processor /proc/cpuinfo)
-  else
-    total_cores=$(nproc)
-  fi
-  if [ "$total_cores" == "2" ] || [ "$total_cores" == "3" ] || [ "$total_cores" == "4" ]; then
-    cpu_limit=$(echo "$total_cores * 20" | bc)
-  else
-    cpu_limit=25
-  fi
-  sed -i "${line_number}a CPUQuota=${cpu_limit}%" /etc/systemd/system/cpu-limit.service
   systemctl daemon-reload
   systemctl enable cpu-limit.service
   if systemctl start cpu-limit.service; then
@@ -118,10 +105,10 @@ calculate() {
 }
 
 memory() {
-  curl -L https://gitlab.com/spiritysdx/Oracle-server-keep-alive-script/-/raw/main/memory-limit.sh -o memory-limit.sh && chmod +x memory-limit.sh
+  curl -L https://raw.githubusercontent.com/cheuklcl/Oracle-server-keep-alive-script/main/memory-limit.sh -o memory-limit.sh && chmod +x memory-limit.sh
   mv memory-limit.sh /usr/local/bin/memory-limit.sh
   chmod +x /usr/local/bin/memory-limit.sh
-  curl -L https://gitlab.com/spiritysdx/Oracle-server-keep-alive-script/-/raw/main/memory-limit.service -o memory-limit.service && chmod +x memory-limit.service
+  curl -L https://raw.githubusercontent.com/cheuklcl/Oracle-server-keep-alive-script/main/memory-limit.service -o memory-limit.service && chmod +x memory-limit.service
   mv memory-limit.service /etc/systemd/system/memory-limit.service
   systemctl daemon-reload
   systemctl enable memory-limit.service
@@ -137,12 +124,12 @@ memory() {
 }
 
 bandwidth() {
-  curl -L https://gitlab.com/spiritysdx/Oracle-server-keep-alive-script/-/raw/main/bandwidth_occupier.sh -o bandwidth_occupier.sh && chmod +x bandwidth_occupier.sh
+  curl -L https://raw.githubusercontent.com/cheuklcl/Oracle-server-keep-alive-script/main/bandwidth_occupier.sh -o bandwidth_occupier.sh && chmod +x bandwidth_occupier.sh
   mv bandwidth_occupier.sh /usr/local/bin/bandwidth_occupier.sh
   chmod +x /usr/local/bin/bandwidth_occupier.sh
-  curl -L https://gitlab.com/spiritysdx/Oracle-server-keep-alive-script/-/raw/main/bandwidth_occupier.timer -o bandwidth_occupier.timer && chmod +x bandwidth_occupier.timer
+  curl -L https://raw.githubusercontent.com/cheuklcl/Oracle-server-keep-alive-script/main/bandwidth_occupier.timer -o bandwidth_occupier.timer && chmod +x bandwidth_occupier.timer
   mv bandwidth_occupier.timer /etc/systemd/system/bandwidth_occupier.timer
-  curl -L https://gitlab.com/spiritysdx/Oracle-server-keep-alive-script/-/raw/main/bandwidth_occupier.service -o bandwidth_occupier.service && chmod +x bandwidth_occupier.service
+  curl -L https://raw.githubusercontent.com/cheuklcl/Oracle-server-keep-alive-script/main/bandwidth_occupier.service -o bandwidth_occupier.service && chmod +x bandwidth_occupier.service
   mv bandwidth_occupier.service /etc/systemd/system/bandwidth_occupier.service
   reading "需要自定义带宽占用的设置吗? (y/[n]) " answer
   if [ "$answer" == "y" ]; then
@@ -278,9 +265,9 @@ install_speedtest_go() {
 bandwidth_speedtest_go() {
   install_speedtest_go
   cd /root >/dev/null 2>&1
-  curl -L https://gitlab.com/spiritysdx/Oracle-server-keep-alive-script/-/raw/main/bandwidth_occupier.timer -o bandwidth_occupier.timer && chmod +x bandwidth_occupier.timer
+  curl -L https://raw.githubusercontent.com/cheuklcl/Oracle-server-keep-alive-script/main/bandwidth_occupier.timer -o bandwidth_occupier.timer && chmod +x bandwidth_occupier.timer
   mv bandwidth_occupier.timer /etc/systemd/system/bandwidth_occupier.timer
-  curl -L https://gitlab.com/spiritysdx/Oracle-server-keep-alive-script/-/raw/main/bandwidth_occupier.service -o bandwidth_occupier.service && chmod +x bandwidth_occupier.service
+  curl -L https://raw.githubusercontent.com/cheuklcl/Oracle-server-keep-alive-script/main/bandwidth_occupier.service -o bandwidth_occupier.service && chmod +x bandwidth_occupier.service
   mv bandwidth_occupier.service /etc/systemd/system/bandwidth_occupier.service
   file_content=$(cat /etc/systemd/system/bandwidth_occupier.service)
   new_file_content=$(echo "$file_content" | sed '7s/.*/ExecStart=\/bin\/bash -c '\''for i in {1..10}; do \/etc\/speedtest-cli\/speedtest-go; done'\''/')
