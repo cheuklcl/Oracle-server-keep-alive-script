@@ -14,8 +14,18 @@ if grep -q 'systemctl stop bandwidth_occupier$' "$OALIVE"; then
   exit 1
 fi
 
-if ! grep -q 'systemctl --no-block stop cpu-limit.service memory-limit.service bandwidth_occupier.service bandwidth_occupier.timer' "$OALIVE"; then
-  echo "FAIL: non-blocking stop command missing"
+if grep -q 'systemctl --no-block stop cpu-limit.service memory-limit.service bandwidth_occupier.service bandwidth_occupier.timer' "$OALIVE"; then
+  echo "FAIL: uninstall should not use non-blocking stop"
+  exit 1
+fi
+
+if ! grep -q 'systemctl disable --now cpu-limit.service memory-limit.service bandwidth_occupier.service bandwidth_occupier.timer' "$OALIVE"; then
+  echo "FAIL: disable --now command missing"
+  exit 1
+fi
+
+if ! grep -q 'systemctl kill cpu-limit.service --kill-who=all' "$OALIVE"; then
+  echo "FAIL: force kill for cpu-limit service missing"
   exit 1
 fi
 

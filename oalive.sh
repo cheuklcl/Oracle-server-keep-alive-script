@@ -286,8 +286,11 @@ uninstall() {
     docker rm boinc &>/dev/null || true
     docker rmi boinc &>/dev/null || true
   fi
-  systemctl --no-block stop cpu-limit.service memory-limit.service bandwidth_occupier.service bandwidth_occupier.timer 2>/dev/null || true
-  systemctl disable cpu-limit.service memory-limit.service bandwidth_occupier.service bandwidth_occupier.timer 2>/dev/null || true
+  systemctl disable --now cpu-limit.service memory-limit.service bandwidth_occupier.service bandwidth_occupier.timer 2>/dev/null || true
+  systemctl kill cpu-limit.service --kill-who=all 2>/dev/null || true
+  systemctl kill memory-limit.service --kill-who=all 2>/dev/null || true
+  systemctl kill bandwidth_occupier.service --kill-who=all 2>/dev/null || true
+  systemctl reset-failed cpu-limit.service memory-limit.service bandwidth_occupier.service bandwidth_occupier.timer 2>/dev/null || true
   pkill -f "/usr/local/bin/cpu-limit.sh" &>/dev/null || true
   pkill -f "/usr/local/bin/memory-limit.sh" &>/dev/null || true
   pkill -f "/usr/local/bin/bandwidth_occupier.sh" &>/dev/null || true
