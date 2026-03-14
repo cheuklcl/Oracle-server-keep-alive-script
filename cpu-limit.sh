@@ -21,6 +21,7 @@ PWM_WINDOW_MS=200
 MAX_STEP_PER_TICK=8
 MAX_OUTPUT=100
 WORKER_COUNT=4
+CORE_COUNT=4
 
 clamp_output() {
   local value="$1"
@@ -86,8 +87,9 @@ compute_next_output() {
 distribute_output() {
   local total="$1"
   local count="$2"
-  local base=$((total / count))
-  local remainder=$((total % count))
+  local per_core_total=$((total * CORE_COUNT))
+  local base=$((per_core_total / count))
+  local remainder=$((per_core_total % count))
   local result=""
   local i
 
@@ -207,7 +209,8 @@ setup_workers() {
   local i pid
   for ((i = 0; i < WORKER_COUNT; i++)); do
     write_worker_duty "$i" 0
-    pid="$(spawn_worker "$i")"
+    spawn_worker "$i"
+    pid="$!"
     printf '%s\n' "$pid" >"$state_dir/worker_${i}.pid"
   done
 }
@@ -246,6 +249,7 @@ run_controller() {
 }
 
 main() {
+  CORE_COUNT="$(nproc 2>/dev/null || echo 4)"
   ensure_single_instance
   setup_workers
   run_controller

@@ -30,8 +30,8 @@ test_compute_next_output() {
 
 test_distribute_output() {
   [ "$(distribute_output 0 4)" = "0 0 0 0" ]
-  [ "$(distribute_output 20 4)" = "5 5 5 5" ]
-  [ "$(distribute_output 22 4)" = "6 6 5 5" ]
+  [ "$(distribute_output 20 4)" = "20 20 20 20" ]
+  [ "$(distribute_output 22 4)" = "22 22 22 22" ]
 }
 
 test_clamp_output
