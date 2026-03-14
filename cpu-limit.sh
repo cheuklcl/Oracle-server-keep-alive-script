@@ -17,10 +17,16 @@ LOW_WATERMARK=19
 HIGH_WATERMARK=21
 THROTTLE_HIGH=30
 THROTTLE_RESUME=21
+THROTTLE_STOP=35
 CHECK_INTERVAL=2
 MAX_WORKERS=1
+CPU_CORES=1
+NORMAL_LIMIT_PER_WORKER=6
+LOW_LIMIT_PER_WORKER=1
 workers=()
-throttle_mode=0
+limiter_pids=()
+current_mode="normal"
+current_limit=0
 
 decide_action() {
   local usage="$1"
@@ -60,11 +66,7 @@ worker_count() {
 log_status() {
   local cpu_usage="$1"
   local action="$2"
-  local mode="normal"
-  if [ "$throttle_mode" -eq 1 ]; then
-    mode="throttle"
-  fi
-  echo "cpu=${cpu_usage}% workers=$(worker_count) mode=${mode} action=${action}"
+  echo "cpu=${cpu_usage}% workers=$(worker_count) mode=${current_mode} limit=${current_limit}% action=${action}"
 }
 
 spawn_worker() {
@@ -86,6 +88,54 @@ kill_last_worker() {
   workers=("${workers[@]}")
 }
 
+kill_all_limiters() {
+  local pid
+  for pid in "${limiter_pids[@]}"; do
+    kill "$pid" >/dev/null 2>&1 || true
+  done
+  limiter_pids=()
+}
+
+start_limiter() {
+  local pid="$1"
+  local limit="$2"
+  cpulimit -p "$pid" -l "$limit" >/dev/null 2>&1 &
+  limiter_pids+=("$!")
+}
+
+apply_limiters() {
+  local limit="$1"
+  local pid
+
+  current_limit="$limit"
+  kill_all_limiters
+  if ! command -v cpulimit >/dev/null 2>&1; then
+    return 0
+  fi
+
+  for pid in "${workers[@]}"; do
+    if ps -p "$pid" >/dev/null 2>&1; then
+      start_limiter "$pid" "$limit"
+    fi
+  done
+}
+
+ensure_worker_count() {
+  local target="$1"
+  local count
+  count="$(worker_count)"
+
+  while [ "$count" -lt "$target" ]; do
+    spawn_worker
+    count="$(worker_count)"
+  done
+
+  while [ "$count" -gt "$target" ]; do
+    kill_last_worker
+    count="$(worker_count)"
+  done
+}
+
 prune_workers() {
   local alive=""
   local pid
@@ -105,11 +155,8 @@ prune_workers() {
 }
 
 cleanup() {
-  local pid
-  for pid in "${workers[@]}"; do
-    kill "$pid" >/dev/null 2>&1 || true
-  done
-  workers=()
+  kill_all_workers
+  kill_all_limiters
   rm -f "${pid_file}"
 }
 
@@ -136,10 +183,24 @@ decide_throttle_state() {
   fi
 }
 
+decide_protection_level() {
+  local usage="$1"
+  local protect_low="$2"
+  local protect_stop="$3"
+
+  if [ "$usage" -gt "$protect_stop" ]; then
+    echo "stop"
+  elif [ "$usage" -gt "$protect_low" ]; then
+    echo "low"
+  else
+    echo "normal"
+  fi
+}
+
 resolve_max_workers() {
   local cores="$1"
   if [ "$cores" -eq 4 ]; then
-    echo 1
+    echo 4
   else
     echo "$cores"
   fi
@@ -175,7 +236,7 @@ ensure_single_instance() {
 run_controller() {
   trap cleanup INT TERM EXIT
 
-  local tick=0
+  local protection_mode="normal"
 
   while true; do
     prune_workers
@@ -187,59 +248,56 @@ run_controller() {
       continue
     fi
 
-    local action
-    local throttle_state
-    throttle_state="$(decide_throttle_state "$cpu_usage" "$throttle_mode" "$THROTTLE_HIGH" "$THROTTLE_RESUME")"
+    local action="hold"
 
-    case "$throttle_state" in
-      throttle_on)
-        throttle_mode=1
-        kill_all_workers
-        action="throttle_on"
-        log_status "$cpu_usage" "$action"
-        sleep "$CHECK_INTERVAL"
-        continue
-        ;;
-      throttle_hold)
-        throttle_mode=1
-        kill_all_workers
-        action="throttle_hold"
-        log_status "$cpu_usage" "$action"
-        sleep "$CHECK_INTERVAL"
-        continue
-        ;;
-      normal)
-        throttle_mode=0
-        ;;
-    esac
+    if [ "$CPU_CORES" -eq 4 ]; then
+      local level
+      level="$(decide_protection_level "$cpu_usage" "$THROTTLE_HIGH" "$THROTTLE_STOP")"
 
-    action="$(decide_action "$cpu_usage" "$(worker_count)" "$MAX_WORKERS" "$LOW_WATERMARK" "$HIGH_WATERMARK")"
-
-    if [ "$MAX_WORKERS" -eq 1 ] && [ "$action" = "hold" ]; then
-      tick=$((tick + 1))
-      if [ "$cpu_usage" -lt 20 ] && [ $((tick % 5)) -eq 0 ]; then
-        if [ "$(worker_count)" -eq 0 ]; then
-          spawn_worker
-          action="pulse_on"
-        fi
-      elif [ "$cpu_usage" -ge 24 ] && [ $((tick % 2)) -eq 0 ]; then
-        if [ "$(worker_count)" -gt 0 ]; then
-          kill_last_worker
-          action="pulse_off"
-        fi
+      if [ "$protection_mode" != "normal" ] && [ "$cpu_usage" -lt "$THROTTLE_RESUME" ]; then
+        protection_mode="normal"
+      elif [ "$level" = "stop" ]; then
+        protection_mode="stop"
+      elif [ "$level" = "low" ] && [ "$protection_mode" != "stop" ]; then
+        protection_mode="low"
       fi
-    fi
 
-    case "$action" in
-      scale_up)
-        spawn_worker
-        ;;
-      scale_down)
-        kill_last_worker
-        ;;
-      hold)
-        ;;
-    esac
+      case "$protection_mode" in
+        normal)
+          current_mode="normal"
+          ensure_worker_count "$MAX_WORKERS"
+          apply_limiters "$NORMAL_LIMIT_PER_WORKER"
+          action="normal_cap"
+          ;;
+        low)
+          current_mode="protect_low"
+          ensure_worker_count 1
+          apply_limiters "$LOW_LIMIT_PER_WORKER"
+          action="protect_low"
+          ;;
+        stop)
+          current_mode="protect_stop"
+          kill_all_workers
+          kill_all_limiters
+          current_limit=0
+          action="protect_stop"
+          ;;
+      esac
+    else
+      action="$(decide_action "$cpu_usage" "$(worker_count)" "$MAX_WORKERS" "$LOW_WATERMARK" "$HIGH_WATERMARK")"
+      case "$action" in
+        scale_up)
+          spawn_worker
+          ;;
+        scale_down)
+          kill_last_worker
+          ;;
+        hold)
+          ;;
+      esac
+      current_mode="legacy"
+      current_limit=0
+    fi
 
     log_status "$cpu_usage" "$action"
     sleep "$CHECK_INTERVAL"
@@ -248,7 +306,8 @@ run_controller() {
 
 main() {
   ulimit -u 128
-  MAX_WORKERS="$(resolve_max_workers "$(nproc)")"
+  CPU_CORES="$(nproc)"
+  MAX_WORKERS="$(resolve_max_workers "$CPU_CORES")"
   ensure_single_instance
   run_controller
 }

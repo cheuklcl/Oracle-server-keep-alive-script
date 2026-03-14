@@ -24,7 +24,14 @@ test_throttle_state() {
   [ "$(decide_throttle_state 20 1 30 21)" = "normal" ]
 }
 
+test_protection_level() {
+  [ "$(decide_protection_level 36 30 35)" = "stop" ]
+  [ "$(decide_protection_level 32 30 35)" = "low" ]
+  [ "$(decide_protection_level 29 30 35)" = "normal" ]
+}
+
 test_decide_action
 test_prune_pid_list
 test_throttle_state
+test_protection_level
 echo "PASS"
