@@ -4,7 +4,7 @@ Description=Keep CPU usage
 [Service]
 User=root
 ExecStart=/bin/bash /usr/local/bin/cpu-limit.sh
-ExecStop=/bin/bash -c 'kill $(cat /tmp/cpu-limit.pid) && rm -rf /tmp/cpu-limit.pid'
+ExecStop=/bin/bash -c '[ -f /tmp/cpu-limit.pid ] && kill "$(cat /tmp/cpu-limit.pid)" 2>/dev/null || true; rm -f /tmp/cpu-limit.pid'
 Restart=always
 RestartSec=60s
 RestartKillSignal=SIGKILL
