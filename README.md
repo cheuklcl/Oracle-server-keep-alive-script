@@ -35,7 +35,7 @@
 有询问是否需要带宽占用的参数自定义，这时候默认选项就是```n```，回车就使用默认配置，输入```y```再回车则需要按照提示自定义参数
 
 ```
-curl -L https://github.com/cheuklcl/Oracle-server-keep-alive-script/-/raw/main/oalive.sh -o oalive.sh && chmod +x oalive.sh && bash oalive.sh
+curl -L https://raw.githubusercontent.com/cheuklcl/Oracle-server-keep-alive-script/refs/heads/main/oalive.sh -o oalive.sh && chmod +x oalive.sh && bash oalive.sh
 ```
 
 或
@@ -47,7 +47,7 @@ bash oalive.sh
 或
 
 ```
-bash <(wget -qO- --no-check-certificate https://github.com/cheuklcl/Oracle-server-keep-alive-script/-/raw/main/oalive.sh)
+bash <(wget -qO- --no-check-certificate https://raw.githubusercontent.com/cheuklcl/Oracle-server-keep-alive-script/refs/heads/main/oalive.sh)
 ```
 
 ### 特点
