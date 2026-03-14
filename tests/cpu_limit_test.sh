@@ -18,6 +18,13 @@ test_prune_pid_list() {
   [ "$out" = "100 300" ]
 }
 
+test_throttle_state() {
+  [ "$(decide_throttle_state 31 0 30 21)" = "throttle_on" ]
+  [ "$(decide_throttle_state 25 1 30 21)" = "throttle_hold" ]
+  [ "$(decide_throttle_state 20 1 30 21)" = "normal" ]
+}
+
 test_decide_action
 test_prune_pid_list
+test_throttle_state
 echo "PASS"
