@@ -346,7 +346,6 @@ pre_check() {
   ${PACKAGE_INSTALL[int]} dmidecode >/dev/null 2>&1
   check_and_install wget wget
   check_and_install bc bc
-  check_and_install cpulimit cpulimit
   check_and_install fallocate util-linux
   check_and_install nproc coreutils
   check_cdn_file

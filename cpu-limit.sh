@@ -1,6 +1,6 @@
 #!/bin/bash
 # by spiritlhl
-# from https://github.com/spiritLHLS/Oracle-server-keep-alive-script
+# rewritten floor controller
 
 if [[ -d "/usr/share/locale/en_US.UTF-8" ]]; then
   export LANG=en_US.UTF-8
@@ -13,211 +13,162 @@ else
 fi
 
 pid_file=/tmp/cpu-limit.pid
-LOW_WATERMARK=19
-HIGH_WATERMARK=21
-THROTTLE_HIGH=30
-THROTTLE_RESUME=21
-CHECK_INTERVAL=1
-MAX_WORKERS=1
-CPU_CORES=1
-NORMAL_LIMIT_PER_WORKER=24
-LOW_LIMIT_PER_WORKER=1
-workers=()
-limiter_pids=()
-current_mode="normal"
-current_limit=0
+state_dir=/tmp/cpu-floor-controller
+TARGET_FLOOR=21
+TARGET_CAP=24
+CONTROL_INTERVAL=1
+PWM_WINDOW_MS=200
+MAX_STEP_PER_TICK=8
+MAX_OUTPUT=100
+WORKER_COUNT=4
 
-decide_action() {
-  local usage="$1"
-  local current_workers="$2"
-  local max_workers="$3"
-  local low="$4"
-  local high="$5"
+clamp_output() {
+  local value="$1"
+  local min="$2"
+  local max="$3"
 
-  if [ "$usage" -ge "$high" ] && [ "$current_workers" -gt 0 ]; then
-    echo "scale_down"
-  elif [ "$usage" -lt "$low" ] && [ "$current_workers" -lt "$max_workers" ]; then
-    echo "scale_up"
+  if [ "$value" -lt "$min" ]; then
+    echo "$min"
+  elif [ "$value" -gt "$max" ]; then
+    echo "$max"
+  else
+    echo "$value"
+  fi
+}
+
+limit_step() {
+  local current="$1"
+  local desired="$2"
+  local max_step="$3"
+  local diff=$((desired - current))
+
+  if [ "$diff" -gt "$max_step" ]; then
+    echo $((current + max_step))
+  elif [ "$diff" -lt $((-max_step)) ]; then
+    echo $((current - max_step))
+  else
+    echo "$desired"
+  fi
+}
+
+target_mode_for_cpu() {
+  local cpu="$1"
+  local floor="$2"
+  local cap="$3"
+
+  if [ "$cpu" -lt "$floor" ]; then
+    echo "raise"
+  elif [ "$cpu" -gt "$cap" ]; then
+    echo "lower"
   else
     echo "hold"
   fi
 }
 
-prune_pid_list() {
-  local pids="$1"
-  local alive="$2"
-  local result=""
-  local pid
+compute_next_output() {
+  local cpu="$1"
+  local current="$2"
+  local floor="$3"
+  local cap="$4"
+  local max_step="$5"
+  local desired="$current"
 
-  for pid in $pids; do
-    case " $alive " in
-      *" $pid "*) result="$result $pid" ;;
-    esac
+  if [ "$cpu" -lt "$floor" ]; then
+    desired=$((current + floor - cpu))
+  elif [ "$cpu" -gt "$cap" ]; then
+    desired=$((current - (cpu - cap)))
+  fi
+
+  desired="$(clamp_output "$desired" 0 "$MAX_OUTPUT")"
+  limit_step "$current" "$desired" "$max_step"
+}
+
+distribute_output() {
+  local total="$1"
+  local count="$2"
+  local base=$((total / count))
+  local remainder=$((total % count))
+  local result=""
+  local i
+
+  for ((i = 0; i < count; i++)); do
+    local value="$base"
+    if [ "$i" -lt "$remainder" ]; then
+      value=$((value + 1))
+    fi
+    result="$result $value"
   done
 
   echo "${result# }"
 }
 
-worker_count() {
-  echo "${#workers[@]}"
+sleep_ms() {
+  local ms="$1"
+  if [ "$ms" -le 0 ]; then
+    return 0
+  fi
+  python3 - "$ms" <<'PY'
+import sys, time
+time.sleep(int(sys.argv[1]) / 1000)
+PY
 }
 
-log_status() {
-  local cpu_usage="$1"
-  local action="$2"
-  echo "cpu=${cpu_usage}% workers=$(worker_count) mode=${current_mode} limit=${current_limit}% action=${action}"
+busy_spin() {
+  local ms="$1"
+  if [ "$ms" -le 0 ]; then
+    return 0
+  fi
+  python3 - "$ms" <<'PY'
+import sys, time
+deadline = time.perf_counter() + int(sys.argv[1]) / 1000
+while time.perf_counter() < deadline:
+    pass
+PY
+}
+
+worker_state_file() {
+  local idx="$1"
+  echo "$state_dir/worker_${idx}.duty"
+}
+
+read_worker_duty() {
+  local idx="$1"
+  local file
+  file="$(worker_state_file "$idx")"
+  if [ -f "$file" ]; then
+    cat "$file"
+  else
+    echo 0
+  fi
+}
+
+write_worker_duty() {
+  local idx="$1"
+  local duty="$2"
+  printf '%s\n' "$duty" >"$(worker_state_file "$idx")"
 }
 
 spawn_worker() {
-  dd if=/dev/zero of=/dev/null >/dev/null 2>&1 &
-  workers+=("$!")
-}
-
-kill_last_worker() {
-  local count
-  count="$(worker_count)"
-  if [ "$count" -le 0 ]; then
-    return 0
-  fi
-
-  local idx=$((count - 1))
-  local pid="${workers[$idx]}"
-  kill "$pid" >/dev/null 2>&1 || true
-  unset 'workers[idx]'
-  workers=("${workers[@]}")
-}
-
-kill_all_limiters() {
-  local pid
-  for pid in "${limiter_pids[@]}"; do
-    kill "$pid" >/dev/null 2>&1 || true
-  done
-  limiter_pids=()
-}
-
-start_limiter() {
-  local pid="$1"
-  local limit="$2"
-  cpulimit -p "$pid" -l "$limit" >/dev/null 2>&1 &
-  limiter_pids+=("$!")
-}
-
-apply_limiters() {
-  local limit="$1"
-  local pid
-
-  current_limit="$limit"
-  kill_all_limiters
-  if ! command -v cpulimit >/dev/null 2>&1; then
-    return 0
-  fi
-
-  for pid in "${workers[@]}"; do
-    if ps -p "$pid" >/dev/null 2>&1; then
-      start_limiter "$pid" "$limit"
-    fi
-  done
-}
-
-ensure_worker_count() {
-  local target="$1"
-  local count
-  count="$(worker_count)"
-
-  while [ "$count" -lt "$target" ]; do
-    spawn_worker
-    count="$(worker_count)"
-  done
-
-  while [ "$count" -gt "$target" ]; do
-    kill_last_worker
-    count="$(worker_count)"
-  done
-}
-
-prune_workers() {
-  local alive=""
-  local pid
-
-  for pid in "${workers[@]}"; do
-    if ps -p "$pid" >/dev/null 2>&1; then
-      alive="$alive $pid"
-    fi
-  done
-
-  local pruned
-  pruned="$(prune_pid_list "${workers[*]}" "${alive# }")"
-  workers=()
-  for pid in $pruned; do
-    workers+=("$pid")
-  done
-}
-
-cleanup() {
-  kill_all_workers
-  kill_all_limiters
-  rm -f "${pid_file}"
+  local idx="$1"
+  (
+    while true; do
+      duty="$(read_worker_duty "$idx")"
+      busy_ms=$((duty * PWM_WINDOW_MS / 100))
+      idle_ms=$((PWM_WINDOW_MS - busy_ms))
+      busy_spin "$busy_ms"
+      sleep_ms "$idle_ms"
+    done
+  ) &
+  echo "$!"
 }
 
 kill_all_workers() {
   local pid
-  for pid in "${workers[@]}"; do
-    kill "$pid" >/dev/null 2>&1 || true
+  for pid in "$state_dir"/worker_*.pid; do
+    [ -e "$pid" ] || continue
+    kill "$(cat "$pid")" >/dev/null 2>&1 || true
   done
-  workers=()
-}
-
-decide_throttle_state() {
-  local usage="$1"
-  local mode="$2"
-  local high="$3"
-  local resume="$4"
-
-  if [ "$usage" -gt "$high" ]; then
-    echo "throttle_on"
-  elif [ "$mode" -eq 1 ] && [ "$usage" -ge "$resume" ]; then
-    echo "throttle_hold"
-  else
-    echo "normal"
-  fi
-}
-
-decide_protection_level() {
-  local usage="$1"
-  local protect_low="$2"
-  if [ "$usage" -gt "$protect_low" ]; then
-    echo "low"
-  else
-    echo "normal"
-  fi
-}
-
-resolve_max_workers() {
-  local cores="$1"
-  if [ "$cores" -eq 4 ]; then
-    echo 4
-  else
-    echo "$cores"
-  fi
-}
-
-has_cpulimit() {
-  if command -v cpulimit >/dev/null 2>&1; then
-    echo "yes"
-  else
-    echo "no"
-  fi
-}
-
-resolve_safe_worker_target() {
-  local target="$1"
-  local limiter_available="$2"
-
-  if [ "$target" -eq 4 ] && [ "$limiter_available" = "no" ]; then
-    echo 1
-  else
-    echo "$target"
-  fi
+  rm -f "$state_dir"/worker_*.pid
 }
 
 get_cpu_usage() {
@@ -226,114 +177,77 @@ get_cpu_usage() {
   if [ -z "$idle" ]; then
     idle="$(vmstat 1 2 2>/dev/null | awk 'NF && $1 ~ /^[0-9]+$/ {idle=$15} END {print idle}')"
   fi
-
-  if [ -z "$idle" ]; then
-    return 1
-  fi
-
+  [ -n "$idle" ] || return 1
   awk -v i="$idle" 'BEGIN {u=100-i; if (u<0) u=0; if (u>100) u=100; printf "%.0f", u}'
 }
 
+log_status() {
+  local cpu_usage="$1"
+  local output="$2"
+  local mode
+  mode="$(target_mode_for_cpu "$cpu_usage" "$TARGET_FLOOR" "$TARGET_CAP")"
+  echo "cpu=${cpu_usage}% output=${output}% mode=${mode}"
+}
+
 ensure_single_instance() {
-  if [ -e "${pid_file}" ]; then
+  if [ -e "$pid_file" ]; then
     local pid
-    pid="$(cat "${pid_file}")"
+    pid="$(cat "$pid_file")"
     if [ -n "$pid" ] && ps -p "$pid" >/dev/null 2>&1; then
       echo "Error: Another instance of cpu-limit.sh is already running with PID ${pid}"
       exit 1
     fi
-    rm -f "${pid_file}"
+    rm -f "$pid_file"
   fi
-  echo $$ >"${pid_file}"
+  echo $$ >"$pid_file"
+}
+
+setup_workers() {
+  mkdir -p "$state_dir"
+  local i pid
+  for ((i = 0; i < WORKER_COUNT; i++)); do
+    write_worker_duty "$i" 0
+    pid="$(spawn_worker "$i")"
+    printf '%s\n' "$pid" >"$state_dir/worker_${i}.pid"
+  done
+}
+
+cleanup() {
+  kill_all_workers
+  rm -rf "$state_dir"
+  rm -f "$pid_file"
 }
 
 run_controller() {
   trap cleanup INT TERM EXIT
 
-  local protection_mode="normal"
-
+  local current_output=0
   while true; do
-    prune_workers
-
     local cpu_usage
     cpu_usage="$(get_cpu_usage)"
     if [ -z "$cpu_usage" ]; then
-      sleep "$CHECK_INTERVAL"
+      sleep "$CONTROL_INTERVAL"
       continue
     fi
 
-    local action="hold"
+    current_output="$(compute_next_output "$cpu_usage" "$current_output" "$TARGET_FLOOR" "$TARGET_CAP" "$MAX_STEP_PER_TICK")"
+    local duties
+    duties="$(distribute_output "$current_output" "$WORKER_COUNT")"
 
-    if [ "$CPU_CORES" -eq 4 ]; then
-      local limiter_available
-      limiter_available="$(has_cpulimit)"
+    local idx=0 duty
+    for duty in $duties; do
+      write_worker_duty "$idx" "$duty"
+      idx=$((idx + 1))
+    done
 
-      local level
-      level="$(decide_protection_level "$cpu_usage" "$THROTTLE_HIGH")"
-
-      if [ "$protection_mode" != "normal" ] && [ "$cpu_usage" -lt "$THROTTLE_RESUME" ]; then
-        protection_mode="normal"
-      elif [ "$level" = "low" ]; then
-        protection_mode="low"
-      else
-        protection_mode="normal"
-      fi
-
-      case "$protection_mode" in
-        normal)
-          current_mode="normal"
-          local safe_target
-          safe_target="$(resolve_safe_worker_target "$MAX_WORKERS" "$limiter_available")"
-          ensure_worker_count "$safe_target"
-          if [ "$limiter_available" = "yes" ]; then
-            apply_limiters "$NORMAL_LIMIT_PER_WORKER"
-            action="normal_cap"
-          else
-            kill_all_limiters
-            current_limit=0
-            action="normal_nolimiter"
-          fi
-          ;;
-        low)
-          current_mode="protect_low"
-          if [ "$limiter_available" = "yes" ]; then
-            ensure_worker_count "$MAX_WORKERS"
-            apply_limiters "$LOW_LIMIT_PER_WORKER"
-            action="protect_low"
-          else
-            ensure_worker_count 1
-            kill_all_limiters
-            current_limit=0
-            action="protect_low_nolimiter"
-          fi
-          ;;
-      esac
-    else
-      action="$(decide_action "$cpu_usage" "$(worker_count)" "$MAX_WORKERS" "$LOW_WATERMARK" "$HIGH_WATERMARK")"
-      case "$action" in
-        scale_up)
-          spawn_worker
-          ;;
-        scale_down)
-          kill_last_worker
-          ;;
-        hold)
-          ;;
-      esac
-      current_mode="legacy"
-      current_limit=0
-    fi
-
-    log_status "$cpu_usage" "$action"
-    sleep "$CHECK_INTERVAL"
+    log_status "$cpu_usage" "$current_output"
+    sleep "$CONTROL_INTERVAL"
   done
 }
 
 main() {
-  ulimit -u 128
-  CPU_CORES="$(nproc)"
-  MAX_WORKERS="$(resolve_max_workers "$CPU_CORES")"
   ensure_single_instance
+  setup_workers
   run_controller
 }
 

@@ -8,7 +8,6 @@ ExecStop=/bin/bash -c '[ -f /tmp/cpu-limit.pid ] && kill "$(cat /tmp/cpu-limit.p
 Restart=always
 RestartSec=60s
 RestartKillSignal=SIGKILL
-CPUQuota=35%
 
 [Install]
 WantedBy=multi-user.target
