@@ -284,40 +284,24 @@ uninstall() {
   docker stop boinc &>/dev/null
   docker rm boinc &>/dev/null
   docker rmi boinc &>/dev/null
-  if [ -f "/etc/systemd/system/cpu-limit.service" ]; then
-    systemctl stop cpu-limit.service
-    systemctl disable cpu-limit.service
-    rm -rf /etc/systemd/system/cpu-limit.service
-    rm -rf /usr/local/bin/cpu-limit.sh*
-    kill $(pgrep dd) &>/dev/null
-    kill $(ps -efA | grep cpu-limit.sh | awk '{print $2}') &>/dev/null
-  fi
-  rm -rf /tmp/cpu-limit.pid &>/dev/null
+  systemctl stop cpu-limit.service memory-limit.service bandwidth_occupier.service bandwidth_occupier.timer 2>/dev/null || true
+  systemctl disable cpu-limit.service memory-limit.service bandwidth_occupier.service bandwidth_occupier.timer 2>/dev/null || true
+  pkill -f "/usr/local/bin/cpu-limit.sh" &>/dev/null || true
+  pkill -f "/usr/local/bin/memory-limit.sh" &>/dev/null || true
+  pkill -f "/usr/local/bin/bandwidth_occupier.sh" &>/dev/null || true
+  pkill -x dd &>/dev/null || true
+  rm -f /etc/systemd/system/cpu-limit.service
+  rm -f /etc/systemd/system/memory-limit.service
+  rm -f /etc/systemd/system/bandwidth_occupier.service
+  rm -f /etc/systemd/system/bandwidth_occupier.timer
+  rm -f /usr/local/bin/cpu-limit.sh /usr/local/bin/memory-limit.sh /usr/local/bin/bandwidth_occupier.sh
+  rm -rf /usr/local/bin/cpu-limit.sh* /usr/local/bin/memory-limit.sh* /usr/local/bin/bandwidth_occupier.sh*
+  rm -f /tmp/cpu-limit.pid /tmp/memory-limit.pid /tmp/bandwidth_occupier.pid
+  rm -rf /dev/shm/file /etc/speedtest-cli
+  rm -f /usr/local/bin/speedtest-go &>/dev/null
   _yellow "已卸载CPU占用 - The cpu limit script has been uninstalled successfully."
-  if [ -f "/etc/systemd/system/memory-limit.service" ]; then
-    systemctl stop memory-limit.service
-    systemctl disable memory-limit.service
-    rm -rf /etc/systemd/system/memory-limit.service
-    rm -rf /usr/local/bin/memory-limit.sh*
-    rm -rf /dev/shm/file
-    kill $(ps -efA | grep memory-limit.sh | awk '{print $2}') &>/dev/null
-    rm -rf /tmp/memory-limit.pid &>/dev/null
-    _yellow "已卸载内存占用 - The memory limit script has been uninstalled successfully."
-  fi
-  if [ -f "/etc/systemd/system/bandwidth_occupier.service" ]; then
-    systemctl stop bandwidth_occupier
-    systemctl disable bandwidth_occupier
-    rm -rf /etc/systemd/system/bandwidth_occupier.service
-    rm -rf /usr/local/bin/bandwidth_occupier.sh*
-    systemctl stop bandwidth_occupier.timer
-    systemctl disable bandwidth_occupier.timer
-    rm -rf /etc/systemd/system/bandwidth_occupier.timer
-    rm -rf /usr/local/bin/speedtest-go &>/dev/null
-    kill $(ps -efA | grep bandwidth_occupier.sh | awk '{print $2}') &>/dev/null
-    rm -rf /tmp/bandwidth_occupier.pid &>/dev/null
-    rm -rf /etc/speedtest-cli &>/dev/null
-    _yellow "已卸载带宽占用 - The bandwidth occupier and timer script has been uninstalled successfully."
-  fi
+  _yellow "已卸载内存占用 - The memory limit script has been uninstalled successfully."
+  _yellow "已卸载带宽占用 - The bandwidth occupier and timer script has been uninstalled successfully."
   systemctl daemon-reload
 }
 
