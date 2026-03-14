@@ -14,8 +14,13 @@ if grep -q 'systemctl stop bandwidth_occupier$' "$OALIVE"; then
   exit 1
 fi
 
-if ! grep -q 'systemctl stop cpu-limit.service memory-limit.service bandwidth_occupier.service bandwidth_occupier.timer' "$OALIVE"; then
-  echo "FAIL: unified stop command missing"
+if ! grep -q 'systemctl --no-block stop cpu-limit.service memory-limit.service bandwidth_occupier.service bandwidth_occupier.timer' "$OALIVE"; then
+  echo "FAIL: non-blocking stop command missing"
+  exit 1
+fi
+
+if ! grep -q 'if command -v docker >/dev/null 2>&1; then' "$OALIVE"; then
+  echo "FAIL: docker guard missing in uninstall"
   exit 1
 fi
 

@@ -281,15 +281,18 @@ bandwidth_speedtest_go() {
 }
 
 uninstall() {
-  docker stop boinc &>/dev/null
-  docker rm boinc &>/dev/null
-  docker rmi boinc &>/dev/null
-  systemctl stop cpu-limit.service memory-limit.service bandwidth_occupier.service bandwidth_occupier.timer 2>/dev/null || true
+  if command -v docker >/dev/null 2>&1; then
+    docker stop boinc &>/dev/null || true
+    docker rm boinc &>/dev/null || true
+    docker rmi boinc &>/dev/null || true
+  fi
+  systemctl --no-block stop cpu-limit.service memory-limit.service bandwidth_occupier.service bandwidth_occupier.timer 2>/dev/null || true
   systemctl disable cpu-limit.service memory-limit.service bandwidth_occupier.service bandwidth_occupier.timer 2>/dev/null || true
   pkill -f "/usr/local/bin/cpu-limit.sh" &>/dev/null || true
   pkill -f "/usr/local/bin/memory-limit.sh" &>/dev/null || true
   pkill -f "/usr/local/bin/bandwidth_occupier.sh" &>/dev/null || true
   pkill -x dd &>/dev/null || true
+  pkill -x cpulimit &>/dev/null || true
   rm -f /etc/systemd/system/cpu-limit.service
   rm -f /etc/systemd/system/memory-limit.service
   rm -f /etc/systemd/system/bandwidth_occupier.service
